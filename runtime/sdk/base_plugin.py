@@ -197,6 +197,10 @@ class XposedHook:
 
 
 def _plugin_id(instance: object) -> str:
+    direct = getattr(instance, "_ayu_plugin_id", None)
+    if isinstance(direct, str) and direct:
+        return direct
+
     module = sys.modules.get(instance.__class__.__module__)
     value = getattr(module, "__id__", None) if module is not None else None
     if isinstance(value, str) and value:
