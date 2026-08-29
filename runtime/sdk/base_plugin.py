@@ -3,9 +3,197 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable
 
 import _bridge
+
+
+class HookStrategy(Enum):
+    DEFAULT = 0
+    CANCEL = 1
+    MODIFY = 2
+    MODIFY_FINAL = 3
+
+
+@dataclass
+class HookResult:
+    strategy: HookStrategy = HookStrategy.DEFAULT
+    request: Any = None
+    response: Any = None
+    update: Any = None
+    updates: Any = None
+    error: Any = None
+    params: Any = None
+
+
+@dataclass
+class PluginMetadata:
+    name: str = ""
+    description: str = ""
+    author: str = ""
+    version: str = ""
+    icon: str = ""
+    min_version: str = ""
+    requirements: list[str] = field(default_factory=list)
+
+
+class PluginError(RuntimeError):
+    def __init__(self, plugin_id: str, message: str) -> None:
+        self.plugin_id = plugin_id
+        self.message = message
+        super().__init__(f"[{plugin_id}] {message}")
+
+
+class AppEvent(Enum):
+    APP_START = 1
+    START = 1
+    APP_STOP = 2
+    STOP = 2
+    APP_PAUSE = 3
+    PAUSE = 3
+    APP_RESUME = 4
+    RESUME = 4
+
+
+class MenuItemType(Enum):
+    MESSAGE_CONTEXT_MENU = 1
+    DRAWER_MENU = 2
+    CHAT_ACTION_MENU = 3
+    PROFILE_ACTION_MENU = 4
+
+
+# Some plugins use the plural alias from older SDK revisions.
+MenuItemTypes = MenuItemType
+
+
+@dataclass
+class MenuItemData:
+    menu_type: MenuItemType
+    text: str
+    on_click: Callable[..., Any] | None = None
+    item_id: str | None = None
+    subtext: str | None = None
+    icon: Any = None
+    condition: Callable[..., bool] | None = None
+    priority: int = 0
+
+
+@dataclass
+class HookFilterData:
+    filter_type: str
+    arg_index: int | None = None
+    value: Any = None
+    or_filters: list[Any] | None = None
+    mvel_expression: str | None = None
+    instance_of: Any = None
+
+
+class HookFilter:
+    @staticmethod
+    def ResultIsInstanceOf(clazz: Any) -> HookFilterData:
+        return HookFilterData("RESULT_IS_INSTANCE_OF", instance_of=clazz)
+
+    @staticmethod
+    def ResultEqual(value: Any) -> HookFilterData:
+        return HookFilterData("RESULT_EQUAL", value=value)
+
+    @staticmethod
+    def ResultNotEqual(value: Any) -> HookFilterData:
+        return HookFilterData("RESULT_NOT_EQUAL", value=value)
+
+    @staticmethod
+    def ArgumentIsNull(index: int) -> HookFilterData:
+        return HookFilterData("ARGUMENT_IS_NULL", arg_index=index)
+
+    @staticmethod
+    def ArgumentIsTrue(index: int) -> HookFilterData:
+        return HookFilterData("ARGUMENT_IS_TRUE", arg_index=index)
+
+    @staticmethod
+    def ArgumentIsFalse(index: int) -> HookFilterData:
+        return HookFilterData("ARGUMENT_IS_FALSE", arg_index=index)
+
+    @staticmethod
+    def ArgumentNotNull(index: int) -> HookFilterData:
+        return HookFilterData("ARGUMENT_NOT_NULL", arg_index=index)
+
+    @staticmethod
+    def ArgumentIsInstanceOf(index: int, clazz: Any) -> HookFilterData:
+        return HookFilterData(
+            "ARGUMENT_IS_INSTANCE_OF",
+            arg_index=index,
+            instance_of=clazz,
+        )
+
+    @staticmethod
+    def ArgumentEqual(index: int, value: Any) -> HookFilterData:
+        return HookFilterData("ARGUMENT_EQUAL", arg_index=index, value=value)
+
+
+class HookFilterTypes:
+    RESULT_IS_INSTANCE_OF = "RESULT_IS_INSTANCE_OF"
+    RESULT_EQUAL = "RESULT_EQUAL"
+    RESULT_NOT_EQUAL = "RESULT_NOT_EQUAL"
+    ARGUMENT_IS_NULL = "ARGUMENT_IS_NULL"
+    ARGUMENT_IS_TRUE = "ARGUMENT_IS_TRUE"
+    ARGUMENT_IS_FALSE = "ARGUMENT_IS_FALSE"
+    ARGUMENT_NOT_NULL = "ARGUMENT_NOT_NULL"
+    ARGUMENT_IS_INSTANCE_OF = "ARGUMENT_IS_INSTANCE_OF"
+    ARGUMENT_EQUAL = "ARGUMENT_EQUAL"
+
+
+def fn_hook_filters(*filters: HookFilterData):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        setattr(func, "__hook_filters__", list(filters))
+        return func
+
+    return decorator
+
+
+class BaseHook:
+    def __init__(
+        self,
+        before: Callable[..., Any] | None = None,
+        after: Callable[..., Any] | None = None,
+        before_filters: list[HookFilterData] | None = None,
+        after_filters: list[HookFilterData] | None = None,
+        plugin: Any = None,
+    ) -> None:
+        self.before = before
+        self.after = after
+        self.before_filters = before_filters or []
+        self.after_filters = after_filters or []
+        self.plugin = plugin
+
+    def before_hooked_method(self, param: Any) -> Any:
+        if self.before is not None:
+            return self.before(param)
+        return None
+
+    def after_hooked_method(self, param: Any) -> Any:
+        if self.after is not None:
+            return self.after(param)
+        return None
+
+
+class MethodHook(BaseHook):
+    pass
+
+
+class MethodReplacement:
+    def __init__(self, py_callable: Callable[..., Any]) -> None:
+        self.py_callable = py_callable
+
+    def replace_hooked_method(self, param: Any) -> Any:
+        return self.py_callable(param)
+
+
+@dataclass
+class XposedHook:
+    member: Any = None
+    hook: Any = None
 
 
 def _plugin_id(instance: object) -> str:
