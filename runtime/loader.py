@@ -89,6 +89,10 @@ def load_plugin(path: str) -> dict[str, Any]:
             raise PluginLoadError(f"Plugin '{plugin_id}' is already loaded")
 
         plugin_class = _find_plugin_class(module, key)
+        # `.plugin` files commonly overwrite module `__name__` with human-readable
+        # metadata. BasePlugin resolves context through class.__module__, so point
+        # the class back at our stable internal module key after discovery.
+        plugin_class.__module__ = key
         instance = plugin_class()
         setattr(instance, "_ayu_plugin_id", plugin_id)
         setattr(instance, "_ayu_plugin_path", resolved)
