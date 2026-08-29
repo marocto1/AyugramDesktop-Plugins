@@ -12,6 +12,7 @@ RUNTIME = ROOT / "runtime"
 sys.path.insert(0, str(SDK))
 sys.path.insert(0, str(RUNTIME))
 
+import base_plugin  # noqa: E402
 import loader  # noqa: E402
 
 
@@ -26,6 +27,9 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(metadata["id"], "desktop_hello")
         self.assertEqual(metadata["name"], "Desktop Hello")
         self.assertIn("desktop_hello", loader.loaded_plugin_ids())
+
+        instance = loader._loaded["desktop_hello"].instance
+        self.assertEqual(base_plugin._plugin_id(instance), "desktop_hello")
 
         settings = loader.create_settings("desktop_hello")
         self.assertEqual(len(settings), 2)
