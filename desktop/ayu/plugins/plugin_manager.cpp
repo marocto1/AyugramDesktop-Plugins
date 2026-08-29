@@ -177,11 +177,11 @@ void PluginManager::log(
 
 bool PluginManager::loadSettings() {
 	_settings = QJsonObject();
-	const auto file = QFile(_settingsPath);
+	auto file = QFile(_settingsPath);
 	if (!file.exists()) {
 		return true;
 	}
-	if (!const_cast<QFile &>(file).open(QIODevice::ReadOnly)) {
+	if (!file.open(QIODevice::ReadOnly)) {
 		return false;
 	}
 
