@@ -1,0 +1,16 @@
+from base_plugin import BasePlugin
+
+__id__ = "hello_world"
+__name__ = "Hello World"
+__description__ = "Minimal AyuGram Desktop plugin runtime smoke test."
+__author__ = "@marocto1"
+__version__ = "0.1.0"
+__sdk_version__ = ">=1.4.4.3"
+
+
+class HelloWorldPlugin(BasePlugin):
+    def on_plugin_load(self):
+        self.log("loaded")
+
+    def on_plugin_unload(self):
+        self.log("unloaded")
