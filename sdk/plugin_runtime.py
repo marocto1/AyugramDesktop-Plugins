@@ -13,6 +13,7 @@ from types import ModuleType
 from typing import Any
 
 from base_plugin import BasePlugin
+from plugin_state import PluginStateStore
 
 
 _METADATA_KEYS = {
@@ -95,10 +96,19 @@ def _find_plugin_class(module: ModuleType) -> type[BasePlugin]:
     return candidates[0]
 
 
-def load_plugin(path: str | Path) -> LoadedPlugin:
+def _default_state_store(plugin_path: Path) -> PluginStateStore:
+    return PluginStateStore(plugin_path.parent / ".ayu_plugin_state.json")
+
+
+def load_plugin(
+    path: str | Path,
+    state_store: PluginStateStore | None = None,
+) -> LoadedPlugin:
     plugin_path = Path(path).resolve()
     metadata = _read_metadata(plugin_path)
-    module_name = f"ayu_plugin_{metadata['__id__'].replace('-', '_')}"
+    store = state_store or _default_state_store(plugin_path)
+    plugin_id = metadata["__id__"]
+    module_name = f"ayu_plugin_{plugin_id.replace('-', '_')}"
 
     loader = importlib.machinery.SourceFileLoader(module_name, str(plugin_path))
     spec = importlib.util.spec_from_loader(module_name, loader)
@@ -111,7 +121,11 @@ def load_plugin(path: str | Path) -> LoadedPlugin:
         loader.exec_module(module)
         plugin_class = _find_plugin_class(module)
         instance = plugin_class()
-        instance._metadata = dict(metadata)
+        instance._bind_runtime(
+            metadata,
+            lambda key, default=None: store.get_setting(plugin_id, key, default),
+            lambda key, value: store.set_setting(plugin_id, key, value),
+        )
         instance.on_plugin_load()
     except Exception:
         sys.modules.pop(module_name, None)
@@ -134,10 +148,16 @@ def discover_and_load(plugin_dir: str | Path) -> list[LoadedPlugin]:
     if not directory.is_dir():
         raise PluginLoadError(f"plugin path is not a directory: {directory}")
 
+    state_store = PluginStateStore(directory / ".ayu_plugin_state.json")
     loaded_now: list[LoadedPlugin] = []
     for path in sorted(directory.glob("*.plugin")):
         try:
-            loaded = load_plugin(path)
+            metadata = _read_metadata(path)
+            if not state_store.is_enabled(metadata["__id__"]):
+                print(f"[plugin-runtime] skipped disabled plugin {metadata['__id__']}")
+                continue
+
+            loaded = load_plugin(path, state_store)
             loaded_now.append(loaded)
             print(
                 f"[plugin-runtime] loaded {loaded.metadata['__id__']} "
@@ -148,6 +168,12 @@ def discover_and_load(plugin_dir: str | Path) -> list[LoadedPlugin]:
             traceback.print_exc()
 
     return loaded_now
+
+
+def set_plugin_enabled(plugin_dir: str | Path, plugin_id: str, enabled: bool) -> None:
+    directory = Path(plugin_dir).resolve()
+    store = PluginStateStore(directory / ".ayu_plugin_state.json")
+    store.set_enabled(plugin_id, enabled)
 
 
 def unload_all() -> None:

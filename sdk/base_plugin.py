@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any
+from typing import Any, Callable
 
 
 class HookStrategy(IntEnum):
@@ -30,6 +30,18 @@ class BasePlugin:
         self._request_hooks: set[str] = set()
         self._send_message_hook_priority: int | None = None
         self._metadata: dict[str, Any] = {}
+        self._setting_getter: Callable[[str, Any], Any] | None = None
+        self._setting_setter: Callable[[str, Any], None] | None = None
+
+    def _bind_runtime(
+        self,
+        metadata: dict[str, Any],
+        setting_getter: Callable[[str, Any], Any],
+        setting_setter: Callable[[str, Any], None],
+    ) -> None:
+        self._metadata = dict(metadata)
+        self._setting_getter = setting_getter
+        self._setting_setter = setting_setter
 
     def on_plugin_load(self) -> None:
         pass
@@ -41,9 +53,14 @@ class BasePlugin:
         return []
 
     def get_setting(self, key: str, default: Any = None) -> Any:
+        if self._setting_getter is not None:
+            return self._setting_getter(key, default)
         return self._settings.get(key, default)
 
     def set_setting(self, key: str, value: Any) -> None:
+        if self._setting_setter is not None:
+            self._setting_setter(key, value)
+            return
         self._settings[key] = value
 
     def add_hook(self, request_name: str) -> None:

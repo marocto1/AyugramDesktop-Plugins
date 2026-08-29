@@ -20,7 +20,7 @@ The Android implementation uses Python 3.11 and exposes APIs such as `BasePlugin
 
 ## Current prototype
 
-The first vertical slice now contains:
+The current vertical slice contains:
 
 - a C++17 host embedding CPython 3.11;
 - `.plugin` discovery from a directory;
@@ -29,12 +29,15 @@ The first vertical slice now contains:
 - loading `.plugin` files with `SourceFileLoader`;
 - discovery and construction of one `BasePlugin` subclass;
 - `on_plugin_load()` / `on_plugin_unload()` lifecycle;
-- an in-memory `get_setting()` / `set_setting()` placeholder;
+- persistent JSON-backed `get_setting()` / `set_setting()`;
+- persistent plugin enable/disable state;
 - registration placeholders for request and outgoing-message hooks;
 - a smoke-test plugin in `examples/hello.plugin`;
-- unit tests for loading and metadata validation.
+- unit tests for loading, metadata validation, persistence and disabled-plugin behavior.
 
-This is still a standalone prototype. It is not wired into AyuGram Desktop's UI, MTProto request pipeline, message sending pipeline, or persistent settings yet.
+Runtime state is currently stored in `.ayu_plugin_state.json` next to the discovered plugins. This location is suitable for the standalone prototype and will be replaced by AyuGram Desktop's application data path during client integration.
+
+This is still a standalone prototype. It is not wired into AyuGram Desktop's UI, MTProto request pipeline or message sending pipeline yet.
 
 ## Build the prototype
 
@@ -70,10 +73,10 @@ Expected smoke-test output includes:
 ## MVP
 
 - [x] `.plugin` discovery and metadata parsing
-- [ ] plugin enable/disable state
+- [x] plugin enable/disable state
 - [x] embedded CPython 3.11 runtime prototype
 - [x] `BasePlugin` lifecycle prototype
-- [ ] persistent `get_setting` / `set_setting`
+- [x] persistent `get_setting` / `set_setting`
 - [ ] `create_settings()` mapped to Desktop UI
 - [ ] `on_send_message_hook` wired to Desktop
 - [ ] request hooks (`pre_request_hook`, `post_request_hook`) wired to Desktop
@@ -87,10 +90,10 @@ Android-specific Java, Android View and arbitrary Xposed/LSPlant hooks cannot ma
 
 ## Next integration step
 
-Move the host/runtime into the AyuGram Desktop tree and bridge plugin lifecycle to the application session. After that, wire `on_send_message_hook` into the outgoing message path before implementing request hooks and Desktop settings UI.
+Move the host/runtime into the AyuGram Desktop tree, point persistent state at the application data directory and bridge plugin lifecycle to application startup/shutdown. After that, wire `on_send_message_hook` into the outgoing message path before implementing request hooks and Desktop settings UI.
 
 ## Upstream
 
 Development targets the `dev` branch of [AyuGram/AyuGramDesktop](https://github.com/AyuGram/AyuGramDesktop).
 
-Status: early development; standalone runtime prototype implemented.
+Status: early development; standalone runtime with persistent state implemented.

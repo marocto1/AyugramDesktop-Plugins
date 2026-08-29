@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "sdk"))
 
 import plugin_runtime
+from plugin_state import PluginStateStore
 
 
 class PluginRuntimeTests(unittest.TestCase):
@@ -57,6 +58,50 @@ class Plugin(BasePlugin):
             )
             with self.assertRaises(plugin_runtime.PluginLoadError):
                 plugin_runtime.load_plugin(path)
+
+    def test_settings_persist_across_plugin_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            path = self._write_plugin(
+                directory,
+                """
+from base_plugin import BasePlugin
+__id__ = "settings_plugin"
+__name__ = "Settings Plugin"
+
+class Plugin(BasePlugin):
+    def on_plugin_load(self):
+        self.previous = self.get_setting("launches", 0)
+        self.set_setting("launches", self.previous + 1)
+""",
+            )
+
+            first = plugin_runtime.load_plugin(path)
+            self.assertEqual(first.instance.previous, 0)
+            plugin_runtime.unload_all()
+
+            second = plugin_runtime.load_plugin(path)
+            self.assertEqual(second.instance.previous, 1)
+
+    def test_disabled_plugin_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            self._write_plugin(
+                directory,
+                """
+from base_plugin import BasePlugin
+__id__ = "disabled_plugin"
+__name__ = "Disabled Plugin"
+
+class Plugin(BasePlugin):
+    pass
+""",
+            )
+            store = PluginStateStore(directory / ".ayu_plugin_state.json")
+            store.set_enabled("disabled_plugin", False)
+
+            loaded = plugin_runtime.discover_and_load(directory)
+            self.assertEqual(loaded, [])
 
 
 if __name__ == "__main__":
