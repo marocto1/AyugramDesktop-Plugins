@@ -14,6 +14,23 @@ void PrintPythonError(const char *context) {
     }
 }
 
+PyObject *ImportRuntimeCallable(const char *name) {
+    auto *runtime = PyImport_ImportModule("plugin_runtime");
+    if (!runtime) {
+        PrintPythonError("failed to import plugin_runtime");
+        return nullptr;
+    }
+
+    auto *callable = PyObject_GetAttrString(runtime, name);
+    Py_DECREF(runtime);
+    if (!callable || !PyCallable_Check(callable)) {
+        Py_XDECREF(callable);
+        PrintPythonError("plugin_runtime callable is unavailable");
+        return nullptr;
+    }
+    return callable;
+}
+
 } // namespace
 
 PluginEngine::PluginEngine(std::filesystem::path sdkDir, std::filesystem::path pluginDir)
@@ -37,7 +54,7 @@ bool PluginEngine::initialize() {
     }
     _initialized = true;
 
-    auto *sysPath = PySys_GetObject("path"); // borrowed reference
+    auto *sysPath = PySys_GetObject("path");
     if (!sysPath || !PyList_Check(sysPath)) {
         PrintPythonError("sys.path is unavailable");
         shutdown();
@@ -71,17 +88,8 @@ int PluginEngine::loadAll() {
         return -1;
     }
 
-    auto *runtime = PyImport_ImportModule("plugin_runtime");
-    if (!runtime) {
-        PrintPythonError("failed to import plugin_runtime");
-        return -1;
-    }
-
-    auto *discover = PyObject_GetAttrString(runtime, "discover_and_load");
-    if (!discover || !PyCallable_Check(discover)) {
-        Py_XDECREF(discover);
-        Py_DECREF(runtime);
-        PrintPythonError("plugin_runtime.discover_and_load is unavailable");
+    auto *discover = ImportRuntimeCallable("discover_and_load");
+    if (!discover) {
         return -1;
     }
 
@@ -89,7 +97,6 @@ int PluginEngine::loadAll() {
     auto *pluginDir = PyUnicode_DecodeFSDefault(pluginDirString.c_str());
     if (!pluginDir) {
         Py_DECREF(discover);
-        Py_DECREF(runtime);
         PrintPythonError("failed to convert plugin directory");
         return -1;
     }
@@ -97,7 +104,6 @@ int PluginEngine::loadAll() {
     auto *result = PyObject_CallFunctionObjArgs(discover, pluginDir, nullptr);
     Py_DECREF(pluginDir);
     Py_DECREF(discover);
-    Py_DECREF(runtime);
 
     if (!result) {
         PrintPythonError("plugin discovery failed");
@@ -116,23 +122,94 @@ int PluginEngine::loadAll() {
     return static_cast<int>(loadedCount);
 }
 
+std::optional<SendMessageHookResult> PluginEngine::dispatchTextMessage(
+        int account,
+        std::string message) {
+    if (!_initialized) {
+        return std::nullopt;
+    }
+
+    auto *dispatch = ImportRuntimeCallable("dispatch_text_message");
+    if (!dispatch) {
+        return std::nullopt;
+    }
+
+    auto *accountObject = PyLong_FromLong(account);
+    auto *messageObject = PyUnicode_DecodeUTF8(
+        message.data(),
+        static_cast<Py_ssize_t>(message.size()),
+        "strict");
+    if (!accountObject || !messageObject) {
+        Py_XDECREF(accountObject);
+        Py_XDECREF(messageObject);
+        Py_DECREF(dispatch);
+        PrintPythonError("failed to build send hook arguments");
+        return std::nullopt;
+    }
+
+    auto *result = PyObject_CallFunctionObjArgs(
+        dispatch,
+        accountObject,
+        messageObject,
+        nullptr);
+    Py_DECREF(accountObject);
+    Py_DECREF(messageObject);
+    Py_DECREF(dispatch);
+    if (!result) {
+        PrintPythonError("send hook dispatch failed");
+        return std::nullopt;
+    }
+
+    auto *cancelledObject = PyObject_GetAttrString(result, "cancelled");
+    auto *paramsObject = PyObject_GetAttrString(result, "params");
+    auto *textObject = paramsObject
+        ? PyObject_GetAttrString(paramsObject, "message")
+        : nullptr;
+
+    if (!cancelledObject || !paramsObject || !textObject || !PyUnicode_Check(textObject)) {
+        Py_XDECREF(cancelledObject);
+        Py_XDECREF(paramsObject);
+        Py_XDECREF(textObject);
+        Py_DECREF(result);
+        PrintPythonError("send hook returned an invalid result");
+        return std::nullopt;
+    }
+
+    const auto cancelled = PyObject_IsTrue(cancelledObject);
+    const auto *utf8 = PyUnicode_AsUTF8(textObject);
+    if (cancelled < 0 || !utf8) {
+        Py_DECREF(cancelledObject);
+        Py_DECREF(paramsObject);
+        Py_DECREF(textObject);
+        Py_DECREF(result);
+        PrintPythonError("failed to decode send hook result");
+        return std::nullopt;
+    }
+
+    auto output = SendMessageHookResult();
+    output.cancelled = (cancelled != 0);
+    output.message = utf8;
+
+    Py_DECREF(cancelledObject);
+    Py_DECREF(paramsObject);
+    Py_DECREF(textObject);
+    Py_DECREF(result);
+    return output;
+}
+
 void PluginEngine::shutdown() {
     if (!_initialized) {
         return;
     }
 
-    auto *runtime = PyImport_ImportModule("plugin_runtime");
-    if (runtime) {
-        auto *unload = PyObject_GetAttrString(runtime, "unload_all");
-        if (unload && PyCallable_Check(unload)) {
-            auto *result = PyObject_CallNoArgs(unload);
-            if (!result) {
-                PrintPythonError("plugin unload failed");
-            }
-            Py_XDECREF(result);
+    auto *unload = ImportRuntimeCallable("unload_all");
+    if (unload) {
+        auto *result = PyObject_CallNoArgs(unload);
+        if (!result) {
+            PrintPythonError("plugin unload failed");
         }
-        Py_XDECREF(unload);
-        Py_DECREF(runtime);
+        Py_XDECREF(result);
+        Py_DECREF(unload);
     } else {
         PyErr_Clear();
     }

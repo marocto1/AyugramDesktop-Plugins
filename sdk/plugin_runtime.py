@@ -9,10 +9,10 @@ import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
-from base_plugin import BasePlugin
+from base_plugin import BasePlugin, HookResult, HookStrategy
 from plugin_state import PluginStateStore
 
 
@@ -41,6 +41,12 @@ class LoadedPlugin:
     module: ModuleType
     instance: BasePlugin
     metadata: dict[str, Any]
+
+
+@dataclass(slots=True)
+class SendMessageDispatchResult:
+    cancelled: bool
+    params: Any
 
 
 _loaded_plugins: list[LoadedPlugin] = []
@@ -98,6 +104,19 @@ def _find_plugin_class(module: ModuleType) -> type[BasePlugin]:
 
 def _default_state_store(plugin_path: Path) -> PluginStateStore:
     return PluginStateStore(plugin_path.parent / ".ayu_plugin_state.json")
+
+
+def _registered_send_hooks() -> list[LoadedPlugin]:
+    registered = [
+        loaded
+        for loaded in _loaded_plugins
+        if loaded.instance._send_message_hook_priority is not None
+    ]
+    return sorted(
+        registered,
+        key=lambda loaded: loaded.instance._send_message_hook_priority or 0,
+        reverse=True,
+    )
 
 
 def load_plugin(
@@ -168,6 +187,66 @@ def discover_and_load(plugin_dir: str | Path) -> list[LoadedPlugin]:
             traceback.print_exc()
 
     return loaded_now
+
+
+def dispatch_send_message(account: int, params: Any) -> SendMessageDispatchResult:
+    current_params = params
+
+    for loaded in _registered_send_hooks():
+        callback = getattr(loaded.instance, "on_send_message_hook", None)
+        if callback is None:
+            continue
+
+        try:
+            result = callback(account, current_params)
+        except Exception:
+            print(
+                f"[plugin-runtime] send hook failed: {loaded.metadata['__id__']}",
+                file=sys.stderr,
+            )
+            traceback.print_exc()
+            continue
+
+        if result is None:
+            continue
+        if not isinstance(result, HookResult):
+            print(
+                f"[plugin-runtime] ignored invalid hook result from "
+                f"{loaded.metadata['__id__']}: {type(result).__name__}",
+                file=sys.stderr,
+            )
+            continue
+
+        try:
+            strategy = HookStrategy(result.strategy)
+        except (TypeError, ValueError):
+            print(
+                f"[plugin-runtime] ignored invalid hook strategy from "
+                f"{loaded.metadata['__id__']}: {result.strategy!r}",
+                file=sys.stderr,
+            )
+            continue
+
+        if strategy == HookStrategy.DEFAULT:
+            continue
+        if strategy == HookStrategy.CANCEL:
+            return SendMessageDispatchResult(cancelled=True, params=current_params)
+        if strategy in (HookStrategy.MODIFY, HookStrategy.MODIFY_FINAL):
+            if result.params is not None:
+                current_params = result.params
+            if strategy == HookStrategy.MODIFY_FINAL:
+                break
+
+    return SendMessageDispatchResult(cancelled=False, params=current_params)
+
+
+def dispatch_text_message(
+    account: int,
+    message: str,
+    **fields: Any,
+) -> SendMessageDispatchResult:
+    params = SimpleNamespace(message=message, **fields)
+    return dispatch_send_message(account, params)
 
 
 def set_plugin_enabled(plugin_dir: str | Path, plugin_id: str, enabled: bool) -> None:

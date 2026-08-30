@@ -1,6 +1,13 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
+#include <string>
+
+struct SendMessageHookResult final {
+    bool cancelled = false;
+    std::string message;
+};
 
 class PluginEngine final {
 public:
@@ -12,6 +19,9 @@ public:
 
     bool initialize();
     int loadAll();
+    std::optional<SendMessageHookResult> dispatchTextMessage(
+        int account,
+        std::string message);
     void shutdown();
 
 private:
